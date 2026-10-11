@@ -5,10 +5,23 @@ const Doctor = require("../models/Doctor");
 
 const createAppointment = async (req, res) => {
   try {
-    const { patient, doctor, appointmentDate, reason } = req.body;
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized. Authentication required.",
+      });
+    }
 
-    if (!mongoose.isValidObjectId(patient) ||
-        !mongoose.isValidObjectId(doctor)) {
+    const userId = req.user.id || req.user._id;
+    const isAdmin = req.user.role === "admin";
+    const { doctor, appointmentDate, reason } = req.body;
+    const patientId = (isAdmin && req.body.patient) ? req.body.patient : userId;
+
+    if (
+      !patientId ||
+      !mongoose.isValidObjectId(patientId) ||
+      !mongoose.isValidObjectId(doctor)
+    ) {
       return res.status(400).json({
         success: false,
         message: "Valid patient and doctor IDs are required",
@@ -17,8 +30,11 @@ const createAppointment = async (req, res) => {
 
     const date = new Date(appointmentDate);
 
-    if (!appointmentDate || Number.isNaN(date.getTime()) ||
-        date <= new Date()) {
+    if (
+      !appointmentDate ||
+      Number.isNaN(date.getTime()) ||
+      date <= new Date()
+    ) {
       return res.status(400).json({
         success: false,
         message: "Appointment date must be a valid future date",
@@ -33,7 +49,7 @@ const createAppointment = async (req, res) => {
     }
 
     const [existingPatient, existingDoctor] = await Promise.all([
-      Patient.findById(patient),
+      Patient.findById(patientId),
       Doctor.findById(doctor),
     ]);
 
@@ -59,7 +75,7 @@ const createAppointment = async (req, res) => {
     }
 
     const newAppointment = await Appointment.create({
-      patient,
+      patient: patientId,
       doctor,
       appointmentDate: date,
       reason: reason.trim(),
@@ -91,6 +107,13 @@ const createAppointment = async (req, res) => {
 
 const getAppointments = async (req, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized. Authentication required.",
+      });
+    }
+
     const appointments = await Appointment.find()
       .populate("patient", "firstName lastName name email phone")
       .populate("doctor", "firstName lastName name specialization consultationFee")
@@ -111,6 +134,13 @@ const getAppointments = async (req, res) => {
 
 const getAppointmentById = async (req, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized. Authentication required.",
+      });
+    }
+
     const { id } = req.params;
 
     if (!mongoose.isValidObjectId(id)) {
@@ -145,6 +175,13 @@ const getAppointmentById = async (req, res) => {
 
 const updateAppointment = async (req, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized. Authentication required.",
+      });
+    }
+
     const { id } = req.params;
     const { patient, doctor, appointmentDate, reason, status } = req.body;
 
@@ -155,9 +192,39 @@ const updateAppointment = async (req, res) => {
       });
     }
 
+    const appointment = await Appointment.findById(id);
+
+    if (!appointment) {
+      return res.status(404).json({
+        success: false,
+        message: "Appointment not found",
+      });
+    }
+
+    const userId = req.user.id || req.user._id;
+    const patientOwnerId = appointment.patient
+      ? (appointment.patient._id || appointment.patient).toString()
+      : null;
+    const isOwner = Boolean(userId && patientOwnerId && patientOwnerId === userId.toString());
+    const isAdmin = req.user.role === "admin";
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Access forbidden. You are not authorized to modify this appointment.",
+      });
+    }
+
     const updates = {};
 
     if (patient !== undefined) {
+      if (!isAdmin && (!userId || patient.toString() !== userId.toString())) {
+        return res.status(403).json({
+          success: false,
+          message: "Access forbidden. You are not authorized to modify this appointment.",
+        });
+      }
+
       if (!mongoose.isValidObjectId(patient)) {
         return res.status(400).json({
           success: false,
@@ -244,7 +311,7 @@ const updateAppointment = async (req, res) => {
       });
     }
 
-    const appointment = await Appointment.findByIdAndUpdate(
+    const updatedAppointment = await Appointment.findByIdAndUpdate(
       id,
       updates,
       { new: true, runValidators: true }
@@ -252,7 +319,7 @@ const updateAppointment = async (req, res) => {
       .populate("patient", "firstName lastName name email phone")
       .populate("doctor", "firstName lastName name specialization consultationFee");
 
-    if (!appointment) {
+    if (!updatedAppointment) {
       return res.status(404).json({
         success: false,
         message: "Appointment not found",
@@ -262,7 +329,7 @@ const updateAppointment = async (req, res) => {
     return res.status(200).json({
       success: true,
       message: "Appointment updated successfully",
-      data: appointment,
+      data: updatedAppointment,
     });
   } catch (error) {
     if (error.name === "ValidationError") {
@@ -281,6 +348,13 @@ const updateAppointment = async (req, res) => {
 
 const cancelAppointment = async (req, res) => {
   try {
+    if (!req.user) {
+      return res.status(401).json({
+        success: false,
+        message: "Unauthorized. Authentication required.",
+      });
+    }
+
     const { id } = req.params;
 
     if (!mongoose.isValidObjectId(id)) {
@@ -296,6 +370,20 @@ const cancelAppointment = async (req, res) => {
       return res.status(404).json({
         success: false,
         message: "Appointment not found",
+      });
+    }
+
+    const userId = req.user.id || req.user._id;
+    const patientOwnerId = appointment.patient
+      ? (appointment.patient._id || appointment.patient).toString()
+      : null;
+    const isOwner = Boolean(userId && patientOwnerId && patientOwnerId === userId.toString());
+    const isAdmin = req.user.role === "admin";
+
+    if (!isOwner && !isAdmin) {
+      return res.status(403).json({
+        success: false,
+        message: "Access forbidden. You are not authorized to modify this appointment.",
       });
     }
 

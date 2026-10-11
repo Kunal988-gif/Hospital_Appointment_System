@@ -16,5 +16,6 @@ router.get('/', authMiddleware, getAppointments);
 router.get('/:id', authMiddleware, getAppointmentById);
 router.put('/:id', authMiddleware, updateAppointment);
 router.patch('/:id/cancel', authMiddleware, cancelAppointment);
+router.patch('/:id', authMiddleware, updateAppointment);
 
 module.exports = router;
